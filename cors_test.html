@@ -27,7 +27,7 @@ for path in $(cat ../cors_paths.json | grep -oP '"/\K[^"]+'); do
                 const response = await fetch(targetUrl, {
                     method: 'GET',
                     headers: {
-                        'Origin': 'https://xiwangkeyi.github.io'
+                        'Origin': 'https://xiwangkeyi.github.io/cors_test.html'
                     },
                     credentials: 'include'
                 });
