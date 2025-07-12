@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CORS 批量测试工具</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .btn { padding: 10px 15px; background-color: #4CAF50; color: white; border: none; cursor: pointer; }
+        .btn:hover { background-color: #45a049; }
+        .progress { margin: 20px 0; }
+        .progress-bar { width: 0%; height: 30px; background-color: #4CAF50; text-align: center; line-height: 30px; color: white; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .vulnerable { color: red; font-weight: bold; }
+        .safe { color: green; }
+        .error { color: orange; }
+        .details { cursor: pointer; text-decoration: underline; }
+        .details-content { display: none; background-color: #f9f9f9; padding: 10px; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <h1>CORS 批量测试工具</h1>
+    
+    <div>
+        <label for="targetDomain">目标域名:</label>
+        <input type="text" id="targetDomain" value="https://account.uds-sit.lenovo.com" style="width: 300px;">
+    </div>
+    
+    <div class="mt-4">
+        <label for="apiPaths">API 路径列表 (每行一个):</label>
+        <textarea id="apiPaths" rows="10" style="width: 100%;">
+/api/auth/login
+/api/users/current
+/api/profile
+/api/v1/account/user
+/api/auth/guest
+        </textarea>
+    </div>
+    
+    <div class="mt-4">
+        <button class="btn" onclick="testAllPaths()">开始测试 CORS</button>
+        <button class="btn" onclick="loadPathsFromFile()">从文件加载路径</button>
+        <input type="file" id="fileInput" accept=".txt,.json" style="display: none;">
+    </div>
+    
+    <div class="progress">
+        <div class="progress-bar" id="progressBar">0%</div>
+    </div>
+    
+    <div id="results"></div>
+    
+    <script>
+        let totalRequests = 0;
+        let completedRequests = 0;
+        
+        async function testAllPaths() {
+            const targetDomain = document.getElementById('targetDomain').value.trim();
+            const pathsText = document.getElementById('apiPaths').value.trim();
+            const apiPaths = pathsText.split('\n').map(p => p.trim()).filter(p => p);
+            
+            if (!targetDomain || !apiPaths.length) {
+                alert('请输入目标域名和API路径！');
+                return;
+            }
+            
+            totalRequests = apiPaths.length;
+            completedRequests = 0;
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressBar').innerText = '0%';
+            document.getElementById('results').innerHTML = '';
+            
+            const results = [];
+            
+            for (const path of apiPaths) {
+                try {
+                    const result = await testPath(targetDomain, path);
+                    results.push(result);
+                } catch (error) {
+                    results.push({
+                        path,
+                        error: error.message,
+                        fullError: error.toString()
+                    });
+                }
+                
+                completedRequests++;
+                const progress = Math.round((completedRequests / totalRequests) * 100);
+                document.getElementById('progressBar').style.width = `${progress}%`;
+                document.getElementById('progressBar').innerText = `${progress}% (${completedRequests}/${totalRequests})`;
+            }
+            
+            displayResults(results);
+        }
+        
+        async function testPath(domain, path) {
+            try {
+                // 处理绝对路径
+                const fullPath = path.startsWith('/') ? path : `/${path}`;
+                const url = `${domain}${fullPath}`;
+                
+                // 先尝试不带凭证的请求，获取基本CORS信息
+                let response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Origin': window.location.origin
+                    },
+                    credentials: 'omit'
+                });
+                
+                let allowOrigin = response.headers.get('Access-Control-Allow-Origin');
+                let allowCredentials = response.headers.get('Access-Control-Allow-Credentials');
+                let status = response.status;
+                
+                // 如果允许当前域名，再尝试带凭证的请求
+                let withCredentials = false;
+                if (allowOrigin === window.location.origin || allowOrigin === '*') {
+                    response = await fetch(url, {
+                        method: 'GET',
+                        headers: {
+                            'Origin': window.location.origin
+                        },
+                        credentials: 'include'
+                    });
+                    
+                    allowOrigin = response.headers.get('Access-Control-Allow-Origin');
+                    allowCredentials = response.headers.get('Access-Control-Allow-Credentials');
+                    status = response.status;
+                    withCredentials = true;
+                }
+                
+                // 获取完整响应头
+                const headers = {};
+                response.headers.forEach((value, name) => {
+                    headers[name] = value;
+                });
+                
+                // 尝试读取响应内容（如果允许）
+                let contentPreview = '';
+                try {
+                    if (response.ok) {
+                        const contentType = response.headers.get('Content-Type') || '';
+                        if (contentType.includes('json')) {
+                            const json = await response.json();
+                            contentPreview = JSON.stringify(json, null, 2);
+                        } else {
+                            const text = await response.text();
+                            contentPreview = text.substring(0, 500) + (text.length > 500 ? '...' : '');
+                        }
+                    }
+                } catch (e) {
+                    contentPreview = `无法读取内容: ${e.message}`;
+                }
+                
+                return {
+                    path,
+                    url,
+                    status,
+                    allowOrigin,
+                    allowCredentials,
+                    withCredentials,
+                    headers,
+                    contentPreview,
+                    isVulnerable: (allowOrigin === window.location.origin || allowOrigin === '*') && 
+                                  allowCredentials === 'true'
+                };
+            } catch (error) {
+                return {
+                    path,
+                    error: error.message,
+                    fullError: error.toString()
+                };
+            }
+        }
+        
+        function displayResults(results) {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '';
+            
+            const table = document.createElement('table');
+            table.innerHTML = `
+                <tr>
+                    <th>路径</th>
+                    <th>状态码</th>
+                    <th>Allow-Origin</th>
+                    <th>Allow-Credentials</th>
+                    <th>是否带凭证</th>
+                    <th>漏洞等级</th>
+                    <th>详情</th>
+                </tr>
+            `;
+            
+            results.forEach((result, index) => {
+                const row = table.insertRow();
+                const isVulnerable = result.isVulnerable;
+                const isError = result.error !== undefined;
+                
+                let severityClass = 'safe';
+                let severityText = '安全';
+                
+                if (isVulnerable) {
+                    severityClass = 'vulnerable';
+                    severityText = '⚠️ 高危漏洞';
+                } else if (result.allowOrigin === '*') {
+                    severityClass = 'vulnerable';
+                    severityText = '⚠️ 中危漏洞';
+                } else if (isError) {
+                    severityClass = 'error';
+                    severityText = '错误';
+                }
+                
+                row.innerHTML = `
+                    <td>${result.path}</td>
+                    <td>${result.status || result.error || '-'}</td>
+                    <td>${result.allowOrigin || '-'}</td>
+                    <td>${result.allowCredentials || '-'}</td>
+                    <td>${result.withCredentials ? '✅' : '❌'}</td>
+                    <td class="${severityClass}">${severityText}</td>
+                    <td><span class="details" onclick="toggleDetails(${index})">查看详情</span></td>
+                `;
+                
+                // 添加详情行
+                const detailsRow = table.insertRow();
+                detailsRow.id = `details-${index}`;
+                detailsRow.className = 'details-content';
+                
+                if (isError) {
+                    detailsRow.innerHTML = `
+                        <td colspan="7">
+                            <strong>错误详情:</strong>
+                            <pre>${result.fullError}</pre>
+                        </td>
+                    `;
+                } else {
+                    detailsRow.innerHTML = `
+                        <td colspan="7">
+                            <div>
+                                <strong>请求 URL:</strong> ${result.url}
+                            </div>
+                            <div>
+                                <strong>响应头:</strong>
+                                <pre>${JSON.stringify(result.headers, null, 2)}</pre>
+                            </div>
+                            <div>
+                                <strong>响应内容预览:</strong>
+                                <pre>${result.contentPreview}</pre>
+                            </div>
+                        </td>
+                    `;
+                }
+            });
+            
+            resultsDiv.appendChild(table);
+        }
+        
+        function toggleDetails(index) {
+            const detailsRow = document.getElementById(`details-${index}`);
+            detailsRow.style.display = detailsRow.style.display === 'table-row' ? 'none' : 'table-row';
+        }
+        
+        function loadPathsFromFile() {
+            document.getElementById('fileInput').click();
+        }
+        
+        document.getElementById('fileInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            try {
+                const content = await file.text();
+                let paths = [];
+                
+                if (file.name.endsWith('.json')) {
+                    // 尝试从JSON中提取路径
+                    // 假设JSON格式为ffuf的输出，包含"input"字段
+                    try {
+                        const json = JSON.parse(content);
+                        if (Array.isArray(json)) {
+                            paths = json.map(item => item.input || '').filter(p => p);
+                        } else {
+                            // 尝试从其他JSON结构提取
+                            paths = [...content.matchAll(/"([^"]+?)"/g)].map(m => m[1]);
+                        }
+                    } catch (e) {
+                        alert(`解析JSON失败: ${e.message}`);
+                        return;
+                    }
+                } else {
+                    // 文本文件，每行一个路径
+                    paths = content.split('\n').map(p => p.trim()).filter(p => p);
+                }
+                
+                document.getElementById('apiPaths').value = paths.join('\n');
+            } catch (error) {
+                alert(`读取文件失败: ${error.message}`);
+            }
+        });
+    </script>
+</body>
+</html>    
